@@ -2,8 +2,8 @@
  * @author Taha Al-Jody <taha@ta3.dev>
  * https://github.com/TA3/web-user-behaviour
  */
-var userBehaviour = (function () {
-    var defaults = {
+const UserBehaviorTracker = (() => {
+    const DEFAULT_CONFIG = {
         userInfo: true,
         clicks: true,
         mouseMovement: true,
@@ -20,86 +20,33 @@ var userBehaviour = (function () {
         touchEvents: true,
         audioVideoInteraction: true,
         customEventRegistration: true,
-        processData: function (results) {
-            console.log(results);
-        },
+        processData: (results) => console.log(results),
     };
-    var user_config = {};
-    var mem = {
-        processInterval: null,
-        mouseInterval: null,
-        mousePosition: [], //x,y,timestamp
-        eventListeners: {
-            scroll: null,
-            click: null,
-            mouseMovement: null,
-            windowResize: null,
-            visibilitychange: null,
-            keyboardActivity: null,
-            touchStart: null
-        },
-        eventsFunctions: {
-            scroll: () => {
-                results.mouseScroll.push([window.scrollX, window.scrollY, getTimeStamp()]);
-            },
-            click: (e) => {
-                results.clicks.clickCount++;
-                var path = [];
-                var node = "";
-                e.composedPath().forEach((el, i) => {
-                    if ((i !== e.composedPath().length - 1) && (i !== e.composedPath().length - 2)) {
-                        node = el.localName;
-                        (el.className !== "") ? el.classList.forEach((clE) => {
-                            node += "." + clE
-                        }): 0;
-                        (el.id !== "") ? node += "#" + el.id: 0;
-                        path.push(node);
-                    }
-                })
-                path = path.reverse().join(">");
-                results.clicks.clickDetails.push([e.clientX, e.clientY, path, getTimeStamp()]);
-            },
-            mouseMovement: (e) => {
-                mem.mousePosition = [e.clientX, e.clientY, getTimeStamp()];
-            },
-            windowResize: (e) => {
-                results.windowSizes.push([window.innerWidth, window.innerHeight, getTimeStamp()]);
-            },
-            visibilitychange: (e) => {
-                results.visibilitychanges.push([document.visibilityState, getTimeStamp()]);
-                processResults();
-            },
-            keyboardActivity: (e) => {
-                results.keyboardActivities.push([e.key, getTimeStamp()]);
-            },
-            pageNavigation: () => {
-                results.navigationHistory.push([location.href, getTimeStamp()]);
-            },
-            formInteraction: (e) => {
-                e.preventDefault(); // Prevent the form from submitting normally
-                results.formInteractions.push([e.target.name, getTimeStamp()]);
-                // Optionally, submit the form programmatically after tracking
-            },
-            touchStart: (e) => {
-                results.touchEvents.push(['touchstart', e.touches[0].clientX, e.touches[0].clientY, getTimeStamp()]);
-            },
-            mediaInteraction: (e) => {
-                results.mediaInteractions.push(['play', e.target.currentSrc, getTimeStamp()]);
-            }
+
+    const state = {
+        config: {...DEFAULT_CONFIG},
+        active: false,
+        listeners: new Map(),
+        intervals: new Set(),
+        mediaElements: new Set(),
+        results: null,
+        mousePosition: null,
+        originalHistoryMethods: {
+            pushState: history.pushState,
+            replaceState: history.replaceState
         }
     };
-    var results = {};
 
-    function resetResults() {
-        results = {
-            userInfo: {
+    const resetResults = () => {
+        state.results = {
+            userInfo: state.config.userInfo ? {
                 windowSize: [window.innerWidth, window.innerHeight],
-                appCodeName: navigator.appCodeName || '',
-                appName: navigator.appName || '',
-                vendor: navigator.vendor || '',
-                platform: navigator.platform || '',
-                userAgent: navigator.userAgent || ''
-            },
+                appCodeName: navigator.appCodeName,
+                appName: navigator.appName,
+                vendor: navigator.vendor,
+                platform: navigator.platform,
+                userAgent: navigator.userAgent
+            } : null,
             time: {
                 startTime: 0,
                 currentTime: 0,
@@ -117,151 +64,233 @@ var userBehaviour = (function () {
             touchEvents: [],
             mediaInteractions: [],
             windowSizes: [],
-            visibilitychanges: [],
+            visibilityChanges: [],
+            customEvents: []
         };
     };
-    resetResults();
 
-    function getTimeStamp() {
-        return Date.now();
+    const getTimestamp = () => Date.now();
+
+    const handleMouseMove = (e) => {
+        state.mousePosition = [e.clientX, e.clientY, getTimestamp()];
     };
 
-    function config(ob) {
-        user_config = {};
-        Object.keys(defaults).forEach((i) => {
-            i in ob ? user_config[i] = ob[i] : user_config[i] = defaults[i];
-        })
+    const handleClick = (e) => {
+        state.results.clicks.clickCount++;
+        const path = [];
+        
+        e.composedPath().forEach((el, i) => {
+            if (i >= e.composedPath().length - 2) return;
+            
+            let node = el.localName || '';
+            if (el.className) node += `.${[...el.classList].join('.')}`;
+            if (el.id) node += `#${el.id}`;
+            path.push(node);
+        });
+
+        state.results.clicks.clickDetails.push([
+            e.clientX,
+            e.clientY,
+            path.reverse().join(' > '),
+            getTimestamp()
+        ]);
     };
 
-    function start() {
+    const handleFormSubmit = (e) => {
+        e.preventDefault();
+        state.results.formInteractions.push([e.target.name, getTimestamp()]);
+        e.target.submit();
+    };
 
-        if (Object.keys(user_config).length !== Object.keys(defaults).length) {
-            console.log("no config provided. using default..");
-            user_config = defaults;
-        }
-        // TIME SET
-        if (user_config.timeCount !== undefined && user_config.timeCount) {
-            results.time.startTime = getTimeStamp();
-        }
-        // MOUSE MOVEMENTS
-        if (user_config.mouseMovement) {
-            mem.eventListeners.mouseMovement = window.addEventListener("mousemove", mem.eventsFunctions.mouseMovement);
-            mem.mouseInterval = setInterval(() => {
-                if (mem.mousePosition && mem.mousePosition.length) {
-                    if (!results.mouseMovements.length || ((mem.mousePosition[0] !== results.mouseMovements[results.mouseMovements.length - 1][0]) && (mem.mousePosition[1] !== results.mouseMovements[results.mouseMovements.length - 1][1]))) {
-                        results.mouseMovements.push(mem.mousePosition)
-                    }
-                }
-            }, defaults.mouseMovementInterval * 1000);
-        }
-        //CLICKS
-        if (user_config.clicks) {
-            mem.eventListeners.click = window.addEventListener("click", mem.eventsFunctions.click);
-        }
-        //SCROLL
-        if (user_config.mouseScroll) {
-            mem.eventListeners.scroll = window.addEventListener("scroll", mem.eventsFunctions.scroll);
-        }
-        //Window sizes
-        if (user_config.windowResize !== false) {
-            mem.eventListeners.windowResize = window.addEventListener("resize", mem.eventsFunctions.windowResize);
-        }
-        //Before unload / visibilitychange
-        if (user_config.visibilitychange !== false) {
-            mem.eventListeners.visibilitychange = window.addEventListener("visibilitychange", mem.eventsFunctions.visibilitychange);
-        }
-        //Keyboard Activity
-        if (user_config.keyboardActivity) {
-            mem.eventListeners.keyboardActivity = window.addEventListener("keydown", mem.eventsFunctions.keyboardActivity);
-        }
-        //Page Navigation
-        if (user_config.pageNavigation) {
-            window.history.pushState = (f => function pushState() {
-                var ret = f.apply(this, arguments);
+    const patchHistoryMethods = () => {
+        history.pushState = new Proxy(state.originalHistoryMethods.pushState, {
+            apply: (target, thisArg, args) => {
+                const result = Reflect.apply(target, thisArg, args);
                 window.dispatchEvent(new Event('pushstate'));
                 window.dispatchEvent(new Event('locationchange'));
-                return ret;
-            })(window.history.pushState);
-            
-            window.addEventListener('popstate', mem.eventsFunctions.pageNavigation);
-            window.addEventListener('pushstate', mem.eventsFunctions.pageNavigation);
-            window.addEventListener('locationchange', mem.eventsFunctions.pageNavigation);
-        }
-        //Form Interactions
-        if (user_config.formInteractions) {
-            document.querySelectorAll('form').forEach(form => form.addEventListener('submit', mem.eventsFunctions.formInteraction));
-        }
-        //Touch Events
-        if (user_config.touchEvents) {
-            mem.eventListeners.touchStart = window.addEventListener("touchstart", mem.eventsFunctions.touchStart);
-        }
-        //Audio & Video Interaction
-        if (user_config.audioVideoInteraction) {
-            document.querySelectorAll('video').forEach(video => {
-                video.addEventListener('play', mem.eventsFunctions.mediaInteraction);
-                // Add other media events as needed
-            });
-        }
+                return result;
+            }
+        });
 
-        //PROCESS INTERVAL
-        if (user_config.processTime !== false) {
-            mem.processInterval = setInterval(() => {
-                processResults();
-            }, user_config.processTime * 1000)
-        }
+        history.replaceState = new Proxy(state.originalHistoryMethods.replaceState, {
+            apply: (target, thisArg, args) => {
+                const result = Reflect.apply(target, thisArg, args);
+                window.dispatchEvent(new Event('replacestate'));
+                window.dispatchEvent(new Event('locationchange'));
+                return result;
+            }
+        });
     };
 
-    function processResults() {
-        user_config.processData(result());
-        if (user_config.clearAfterProcess) {
-            resetResults();
-        }
-    }
+    const trackMediaElement = (element) => {
+        const mediaEvents = ['play', 'pause', 'ended', 'volumechange'];
+        const handler = (e) => {
+            state.results.mediaInteractions.push([
+                e.type,
+                element.currentSrc,
+                element.currentTime,
+                getTimestamp()
+            ]);
+        };
 
-    function stop() {
-        if (user_config.processTime !== false) {
-            clearInterval(mem.processInterval);
-        }
-        clearInterval(mem.mouseInterval);
-        window.removeEventListener("scroll", mem.eventsFunctions.scroll);
-        window.removeEventListener("click", mem.eventsFunctions.click);
-        window.removeEventListener("mousemove", mem.eventsFunctions.mouseMovement);
-        window.removeEventListener("resize", mem.eventsFunctions.windowResize);
-        window.removeEventListener("visibilitychange", mem.eventsFunctions.visibilitychange);
-        window.removeEventListener("keydown", mem.eventsFunctions.keyboardActivity);
-        window.removeEventListener("touchstart", mem.eventsFunctions.touchStart);
-        results.time.stopTime = getTimeStamp();
-        processResults();
-    }
-
-    function result() {
-        if (user_config.userInfo === false && userBehaviour.showResult().userInfo !== undefined) {
-            delete userBehaviour.showResult().userInfo;
-        }
-        if (user_config.timeCount !== undefined && user_config.timeCount) {
-            results.time.currentTime = getTimeStamp();
-        }
-        return results
+        mediaEvents.forEach(event => {
+            element.addEventListener(event, handler);
+            state.mediaElements.add({ element, event, handler });
+        });
     };
 
-    function showConfig() {
-        if (Object.keys(user_config).length !== Object.keys(defaults).length) {
-            return defaults;
-        } else {
-            return user_config;
-        }
-    };
-    
     return {
-        showConfig: showConfig,
-        config: config,
-        start: start,
-        stop: stop,
-        showResult: result,
-        processResults: processResults,
-        registerCustomEvent: (eventName, callback) => {
-            window.addEventListener(eventName, callback);
+        config(newConfig) {
+            state.config = { ...DEFAULT_CONFIG, ...newConfig };
         },
-    };
 
+        start() {
+            if (state.active) return;
+            state.active = true;
+            resetResults();
+            state.results.time.startTime = getTimestamp();
+
+            // Event listeners setup
+            const addListener = (type, handler, options) => {
+                window.addEventListener(type, handler, options);
+                state.listeners.set(handler, { type, handler, options });
+            };
+
+            if (state.config.mouseMovement) {
+                addListener('mousemove', handleMouseMove);
+                const interval = setInterval(() => {
+                    if (state.mousePosition && (!state.results.mouseMovements.length ||
+                        state.mousePosition[0] !== state.results.mouseMovements.slice(-1)[0]?.[0] ||
+                        state.mousePosition[1] !== state.results.mouseMovements.slice(-1)[0]?.[1])) {
+                        state.results.mouseMovements.push(state.mousePosition);
+                    }
+                }, state.config.mouseMovementInterval * 1000);
+                state.intervals.add(interval);
+            }
+
+            if (state.config.clicks) addListener('click', handleClick);
+            if (state.config.mouseScroll) addListener('scroll', () => {
+                state.results.mouseScroll.push([window.scrollX, window.scrollY, getTimestamp()]);
+            });
+
+            if (state.config.windowResize) addListener('resize', () => {
+                state.results.windowSizes.push([window.innerWidth, window.innerHeight, getTimestamp()]);
+            });
+
+            if (state.config.visibilitychange) addListener('visibilitychange', () => {
+                state.results.visibilityChanges.push([document.visibilityState, getTimestamp()]);
+            });
+
+            if (state.config.keyboardActivity) addListener('keydown', (e) => {
+                state.results.keyboardActivities.push([e.key, getTimestamp()]);
+            });
+
+            if (state.config.pageNavigation) {
+                patchHistoryMethods();
+                const navHandler = () => {
+                    state.results.navigationHistory.push([location.href, getTimestamp()]);
+                };
+                ['popstate', 'pushstate', 'replacestate', 'locationchange'].forEach(event => {
+                    addListener(event, navHandler);
+                });
+            }
+
+            if (state.config.formInteractions) {
+                addListener('submit', handleFormSubmit, true);
+            }
+
+            if (state.config.touchEvents) {
+                addListener('touchstart', (e) => {
+                    state.results.touchEvents.push([
+                        'touchstart',
+                        e.touches[0].clientX,
+                        e.touches[0].clientY,
+                        getTimestamp()
+                    ]);
+                });
+            }
+
+            if (state.config.audioVideoInteraction) {
+                document.querySelectorAll('video, audio').forEach(trackMediaElement);
+            }
+
+            if (state.config.processTime) {
+                const interval = setInterval(() => this.processResults(), state.config.processTime * 1000);
+                state.intervals.add(interval);
+            }
+        },
+
+        stop() {
+            if (!state.active) return;
+            state.active = false;
+
+            // Clear intervals
+            state.intervals.forEach(clearInterval);
+            state.intervals.clear();
+
+            // Remove event listeners
+            state.listeners.forEach(({ type, handler, options }) => {
+                window.removeEventListener(type, handler, options);
+            });
+            state.listeners.clear();
+
+            // Remove media listeners
+            state.mediaElements.forEach(({ element, event, handler }) => {
+                element.removeEventListener(event, handler);
+            });
+            state.mediaElements.clear();
+
+            // Restore original history methods
+            history.pushState = state.originalHistoryMethods.pushState;
+            history.replaceState = state.originalHistoryMethods.replaceState;
+
+            state.results.time.stopTime = getTimestamp();
+            this.processResults();
+        },
+
+        processResults() {
+            state.results.time.currentTime = getTimestamp();
+            state.config.processData({ ...state.results });
+            
+            if (state.config.clearAfterProcess) {
+                const preservedInfo = state.config.userInfo 
+                    ? { userInfo: state.results.userInfo } 
+                    : {};
+                resetResults();
+                Object.assign(state.results, preservedInfo);
+            }
+        },
+
+        registerCustomEvent(eventName, handler) {
+            if (!state.config.customEventRegistration) return;
+            
+            const wrappedHandler = (e) => {
+                state.results.customEvents.push({
+                    eventName,
+                    details: e.detail,
+                    timestamp: getTimestamp()
+                });
+                handler(e);
+            };
+            
+            window.addEventListener(eventName, wrappedHandler);
+            state.listeners.set(wrappedHandler, {
+                type: eventName,
+                handler: wrappedHandler
+            });
+        },
+
+        getResults() {
+            return structuredClone(state.results);
+        },
+
+        getConfig() {
+            return { ...state.config };
+        }
+    };
 })();
+
+// Usage example:
+// UserBehaviorTracker.config({ processData: data => sendToAnalytics(data) });
+// UserBehaviorTracker.start();
+// UserBehaviorTracker.registerCustomEvent('customEvent', handleCustom);
